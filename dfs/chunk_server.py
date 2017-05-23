@@ -2,8 +2,8 @@
 import socket
 import select
 
-import rpc
 from constants import *
+import rpc
 
 class ChunkServer:
 
@@ -15,7 +15,7 @@ class ChunkServer:
 
     def create_chunk(self, chunkid):
         fd = self._env.open(self._chunk_fname(chunkid), "w+")
-        env.close(fd)
+        self._env.close(fd)
 
     def delete_chunk(self, chunkid):
         self._env.remove(self._chunk_fname(chunkid))
@@ -159,12 +159,12 @@ def main():
             if method == "create_chunk":
                 try:
                     chunk_server.create_chunk(msg["chunkid"])
-                except ValueError as err:
+                except Exception as err:
                     resp["error"] = str(err)
             elif method == "delete_chunk":
                 try:
                     chunk_server.delete_chunk(msg["chunkid"])
-                except ValueError as err:
+                except Exception as err:
                     resp["error"] = str(err)
             elif method == "write_chunk":
                 try:
@@ -173,12 +173,12 @@ def main():
                         msg["data"],
                         msg["offset"]
                     )
-                except ValueError as err:
+                except Exception as err:
                     resp["error"] = str(err)
             elif method == "read_chunk":
                 try:
                     resp["chunk"] = chunk_server.read_chunk(msg["chunkid"])
-                except ValueError as err:
+                except Exception as err:
                     resp["error"] = str(err)
             elif method == "ping":
                 resp["status"] = "ok"

@@ -17,7 +17,7 @@ class MemEnv:
         else:
             f = self._files.get(fname, None)
             if not f:
-                return -1
+                raise IOError("No such file {}".format(fname))
             self._ftable.append(f)
             
         return len(self._ftable) - 1
@@ -29,12 +29,14 @@ class MemEnv:
 
     def remove(self, fname):
         # TODO: Concurrent access
+        if fname not in self._files:
+            raise IOError("{} does not exist.".format(fname))
         self._files.pop(fname, None)
         self._ftable = filter(lambda e: e["name"] != fname, self._ftable)
 
-    def seek(fd, pos):
+    def seek(self, fd, pos):
         f = self._ftable[fd]
-        assert(pos <= len(f["buff"]))
+        assert(pos <= len(f["buf"]))
         f["offset"] = pos
         
     def read(self, fd, bufsize):
@@ -59,7 +61,7 @@ class MemEnv:
 
         self.seek(fd, start_offset)
         while len(buf) < l:
-            b = self.read(fd, len(buf) - l)
+            b = self.read(fd, l - len(buf))
             if not b:
                 break
             buf += b

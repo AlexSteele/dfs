@@ -92,6 +92,9 @@ class File:
 
         return len(data)
 
+    def close(self):
+        self._master.close(self.name)
+
 class Client:
 
     def __init__(self, master):
@@ -104,7 +107,9 @@ class Client:
         self.close()
 
     def create(self, fname):
-        self._master.create(fname)
+        finfo = self._master.create(fname)
+        f = File(fname, self._master, finfo)
+        return f
 
     def delete(self, fname):
         self._master.delete(fname)
