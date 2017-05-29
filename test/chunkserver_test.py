@@ -2,7 +2,7 @@
 import setup
 import unittest
 
-from chunk_server import ChunkServer
+from chunkserver import ChunkServer
 import env
 
 class TestChunkServer(unittest.TestCase):

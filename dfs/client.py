@@ -1,6 +1,6 @@
 
 import master
-import chunk_server
+import chunkserver
 from constants import CHUNK_SIZE
 
 class _ChunkCache:
@@ -33,7 +33,7 @@ class File:
         if self._cache.contains(cnum):
             return self._cache.get(cnum)
         cinfo = self._info.chunk_info[cnum]
-        server = chunk_server.connect(cinfo.server_addr)
+        server = chunkserver.connect(cinfo.addr)
         chunk = server.read_chunk(cinfo.id)
         self._cache.add(cnum, chunk)
         return chunk
@@ -50,7 +50,7 @@ class File:
         data = chunk[coff:coff+rem]
         n -= rem
         self._roffset += rem
-        
+
         while n > 0:
             cnum = self._roffset / CHUNK_SIZE
             if cnum >= len(self._info.chunk_info):
@@ -65,26 +65,26 @@ class File:
 
         return data
 
-    # TODO: Only supports append.
     def write(self, data):
 
-        last = self._get_chunk(len(self._info.chunk_info) - 1)
-        if len(last) < CHUNK_SIZE:
-            info = self._info.chunk_info[-1]
-            rem = min(CHUNK_SIZE - len(last), len(data))
-            chunk_server.connect(info.addr)
-            chunk_server.write_chunk(
-                id=info.id,
-                data=last+data[rem:]
-            )
-            data = data[rem:]
+        if len(self._info.chunk_info) > 0:
+            last = self._get_chunk(len(self._info.chunk_info) - 1)
+            if len(last) < CHUNK_SIZE:
+                cinfo = self._info.chunk_info[-1]
+                rem = min(CHUNK_SIZE - len(last), len(data))
+                server = chunkserver.connect(cinfo.addr)
+                server.write_chunk(
+                    chunkid=cinfo.id,
+                    data=last+data[:rem]
+                )
+                data = data[rem:]
 
         while len(data) > 0:
             cinfo = self._master.request_new_chunk(self.name)
-            server = chunk_server.connect(cinfo.addr)
             rem = min(len(data), CHUNK_SIZE)
+            server = chunkserver.connect(cinfo.addr)
             server.write_chunk(
-                id=cinfo.id,
+                chunkid=cinfo.id,
                 data=data[:rem]
             )
             self._info.chunk_info.append(cinfo)
@@ -127,7 +127,7 @@ class Client:
         self._master.ping()
 
     def close(self):
-        self._master.close()
+        self._master.closeconn()
 
 def connect(addr):
     m = master.connect(addr)

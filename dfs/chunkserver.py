@@ -30,7 +30,7 @@ class ChunkServer:
                    start_offset=-1,
                    end_offset=-1):
         fd = self._env.open(self._chunk_fname(chunkid), "r")
-        
+
         if start_offset is -1 and end_offset is -1:
             return self._env.readall(fd)
 
@@ -74,7 +74,6 @@ class RemoteChunkServer:
             "write_chunk",
             chunkid=chunkid,
             data=data,
-            offset=offset
         )
         self._check_error(resp)
 
@@ -95,7 +94,10 @@ class RemoteChunkServer:
         self._conn.close()
 
     def addr(self):
-        return self._conn.getpeername()
+        resp = rpc.call_sync(self._conn, "get_client_port")
+        port = int(resp["port"])
+        host = self._conn.getpeername()[0]
+        return (host, port)
 
     def ping(self):
         resp = rpc.call_sync(self._conn, "ping")
@@ -120,6 +122,8 @@ def main():
             l = args[idx+1].split(":")
             master_addr = (l[0], int(l[1]))
 
+    print("Starting chunk server.")
+
     master_conn = socket.socket()
     try:
         master_conn.connect(master_addr)
@@ -134,11 +138,11 @@ def main():
     print("Listening for clients on port {}".format(client_port))
 
     readers = [client_listener, master_conn]
-    chunk_server = ChunkServer(env=env.MemEnv())
+    chunkserver = ChunkServer(env=env.MemEnv())
     while True:
         rlist, _, _ = select.select(readers, [], [])
         for s in rlist:
-            
+
             if s is client_listener:
                 conn, addr = s.accept()
                 print("Accepted client conn with {}".format(addr))
@@ -158,28 +162,33 @@ def main():
             resp = {}
             if method == "create_chunk":
                 try:
-                    chunk_server.create_chunk(msg["chunkid"])
+                    chunkserver.create_chunk(msg["chunkid"])
                 except Exception as err:
                     resp["error"] = str(err)
+                    print(err)
             elif method == "delete_chunk":
                 try:
-                    chunk_server.delete_chunk(msg["chunkid"])
+                    chunkserver.delete_chunk(msg["chunkid"])
                 except Exception as err:
                     resp["error"] = str(err)
+                    print(err)
             elif method == "write_chunk":
                 try:
-                    chunk_server.write_chunk(
+                    chunkserver.write_chunk(
                         msg["chunkid"],
-                        msg["data"],
-                        msg["offset"]
+                        msg["data"]
                     )
                 except Exception as err:
                     resp["error"] = str(err)
+                    print(err)
             elif method == "read_chunk":
                 try:
-                    resp["chunk"] = chunk_server.read_chunk(msg["chunkid"])
+                    resp["chunk"] = chunkserver.read_chunk(msg["chunkid"])
                 except Exception as err:
                     resp["error"] = str(err)
+                    print(err)
+            elif method == "get_client_port":
+                resp["port"] = client_port
             elif method == "ping":
                 resp["status"] = "ok"
             else:

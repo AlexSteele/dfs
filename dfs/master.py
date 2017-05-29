@@ -7,9 +7,9 @@ from constants import *
 
 class ChunkInfo:
 
-    def __init__(self, id, chunk_server_addr):
+    def __init__(self, id, addr):
         self.id = id
-        self.addr = chunk_server_addr
+        self.addr = addr
 
     def to_hash(self):
         return {
@@ -19,9 +19,13 @@ class ChunkInfo:
 
     @staticmethod
     def from_hash(h):
-        ci = ChunkInfo()
-        ci.id = h["id"]
-        ci.addr = h["addr"]
+        host = h["addr"][0]
+        port = int(h["addr"][1])
+        addr = (host, port)
+        ci = ChunkInfo(
+            id=h["id"],
+            addr=addr
+        )
         return ci
 
 class FileInfo:
@@ -33,7 +37,7 @@ class FileInfo:
 
     def to_hash(self):
         return {
-            "chunk_info": self.chunk_info,
+            "chunk_info": [cinfo.to_hash() for cinfo in self.chunk_info],
         }
 
     @staticmethod
@@ -65,24 +69,28 @@ class Master:
     # TODO: Handle disconnect of chunk servers.
 
     def __init__(self,
-                 chunk_server_iter,
-                 chunk_servers=[],
+                 chunkserver_iter,
+                 chunkservers=[],
                  file_info={}):
-        self._chunk_servers = chunk_servers
-        self._cserver_iter = chunk_server_iter
+        self._chunkservers = chunkservers
+        self._chunkserver_dict = {}
+        self._chunkserver_iter = chunkserver_iter
         self._file_info = file_info
 
-    def _get_info(self, fname):
+        for cserver in chunkservers:
+            self._chunkserver_dict[cserver.addr()] = cserver
+
+    def _get_file_info(self, fname):
         info = self._file_info.get(fname, None)
         if not info or info.deleted:
             raise IOError("No such file {}".format(fname))
         return info
 
-    def _del_file(self, fname, finfo):
+    def _do_delete(self, fname, finfo):
         # TODO: Do async.
         del self._file_info[fname]
         for cinfo in finfo.chunk_info:
-            cserver = self._chunk_servers[cinfo.addr]
+            cserver = self._chunkserver_dict[cinfo.addr]
             cserver.delete_chunk(cinfo.id)
 
     def create(self, fname):
@@ -93,46 +101,48 @@ class Master:
         return info
 
     def delete(self, fname):
-        info = self._get_info(fname)
+        info = self._get_file_info(fname)
         if info.nopen > 0:
             info.deleted = True
             return
-        self._del_file(fname, info)
-
+        self._do_delete(fname, info)
+    
     def open(self, fname):
-        info = self._get_info(fname)
+        info = self._get_file_info(fname)
         info.nopen += 1
         return info
 
     def close(self, fname):
-        info = self._get_info(fname)
+        info = self._get_file_info(fname)
         info.nopen -= 1
         if info.deleted and info.nopen is 0:
-            self._del_file(fname, info)
+            self._do_delete(fname, info)
 
     def request_new_chunk(self, fname):
         import uuid
 
-        finfo = self._get_info(fname)
-        server = self._cserver_iter.next(self._chunk_servers)
-        cid = uuid.uuid4()
-        server.create_chunk(cid)
-        cinfo = ChunkInfo()
-        cinfo.id = cid
-        cinfo.addr = server.addr()
+        finfo = self._get_file_info(fname)
+        server = self._chunkserver_iter.next(self._chunkservers)
+        chunkid = str(uuid.uuid4())
+        server.create_chunk(chunkid)
+        cinfo = ChunkInfo(
+            id=chunkid,
+            addr=server.addr()
+        )
         finfo.chunk_info.append(cinfo)
         return cinfo
 
     def get_chunk_info(self, fname,
                        start_idx=-1,
                        end_idx=-1):
-        info = self._get_info(fname)
+        info = self._get_file_info(fname)
         start_idx = 0 if start_idx is -1 else start_idx
         end_idx = len(info.chunk_info) if end_idx is -1 else end_idx
         return info.chunk_info[start_idx:end_idx]
 
     def add_chunk_server(self, server):
-        self._chunk_servers.append(server)
+        self._chunkservers.append(server)
+        self._chunkserver_dict[server.addr()] = server
 
 class RemoteMaster:
 
@@ -163,7 +173,7 @@ class RemoteMaster:
     def open(self, fname):
         resp = rpc.call_sync(
             conn=self._conn,
-            method="delete",
+            method="open",
             fname=fname
         )
         self._check_error(resp)
@@ -205,7 +215,8 @@ class RemoteMaster:
         resp = rpc.call_sync(self._conn, "ping")
         assert(resp["status"] == "OK")
 
-    def close(self):
+    # TODO: Rename.
+    def closeconn(self):
         self._conn.close()
 
 def connect(addr):
@@ -221,7 +232,7 @@ def _listen(port):
 
 def main():
     import sys
-    from chunk_server import RemoteChunkServer
+    from chunkserver import RemoteChunkServer
 
     client_port = DEFAULT_MASTER_CLIENT_PORT
     chunk_port = DEFAULT_MASTER_CHUNK_PORT
@@ -242,7 +253,7 @@ def main():
     print("Listening for chunkservers on port {}".format(chunk_port))
 
     readers = [client_listener, chunk_listener]
-    master = Master(chunk_server_iter=RoundRobinIter())
+    master = Master(chunkserver_iter=RoundRobinIter())
     while True:
         rlist, _, _ = select.select(readers, [], [])
         for s in rlist:
@@ -281,23 +292,27 @@ def main():
                 try:
                     master.delete(msg["fname"])
                 except Exception as err:
+                    print(err)
                     resp["error"] = str(err)
             elif method == "open":
                 try:
                     finfo = master.open(msg["fname"])
                     resp = finfo.to_hash()
                 except Exception as err:
+                    print(err)
                     resp["error"] = str(err)
             elif method == "close":
                 try:
                     master.close(msg["fname"])
                 except Exception as err:
+                    print(err)
                     resp["error"] = str(err)
             elif method == "request_new_chunk":
                 try:
                     cinfo = master.request_new_chunk(msg["fname"])
                     resp = cinfo.to_hash()
                 except Exception as err:
+                    print(err)
                     resp["error"] = str(err)
             elif method == "get_chunk_info":
                 try:
@@ -308,6 +323,7 @@ def main():
                     )
                     resp["chunk_info"] = [info.to_hash() for info in infos]
                 except Exception as err:
+                    print(err)
                     resp["error"] = str(err)
             elif method == "ping":
                 resp["status"] = "OK"
